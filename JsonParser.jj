@@ -1,0 +1,203 @@
+PARSER_BEGIN(JsonParser)
+
+import java.math.BigDecimal;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.beanutils.PropertyUtils;
+
+public class JsonParser {
+
+}
+
+PARSER_END(JsonParser)
+
+SKIP : { <[" ","\t","\n"]> }
+TOKEN : { 
+  <E : ["e","E"](["+","-"])?>
+| <DIGITS : ["0"-"9"] | ["1"-"9"](["0"-"9"])*>
+| <QUOTE : "\""> : STRING_STATE
+}
+<STRING_STATE> MORE  : { "\\" : ESC_STATE }
+<STRING_STATE> TOKEN : { 
+  <ENDQUOTE : <QUOTE> > : DEFAULT 
+| <CHAR : ~["\"","\\"]> 
+}
+<ESC_STATE> TOKEN : { 
+  <CNTRL_ESC : ["\"","\\","/","b","f","n","r","t"]> : STRING_STATE 
+}
+<ESC_STATE> MORE  : { "u" : HEX_STATE }
+<HEX_STATE>  TOKEN : { 
+  <#HEX : ["a"-"f","A"-"F","0"-"9"]>
+| <HEX_ESC : <HEX><HEX><HEX><HEX> > : STRING_STATE
+}
+
+public Object JsonObject(String clazz) :
+{ 
+  Object o = null;
+  try {
+    o = Class.forName(clazz).newInstance();
+  } catch(Exception e) {
+    throw new RuntimeException(e);
+  }
+}
+{
+  "{" [ Members(o) ] "}"
+  { return o; }
+}
+
+public void Members(Object o) :
+{ }
+{
+  Pair(o) [ "," Members(o) ]
+}
+
+public void Pair(Object o) :
+{
+  String property;
+  Object value;
+}
+{
+  property=JsonString() ":" value=Value(o.getClass().getName())
+  {
+    try {
+      //set property
+      PropertyUtils.setProperty(o, property, value);
+    } catch(Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+}
+
+public List Array(String clazz) :
+{ List list = null; }
+{
+  "[" [ list=Elements(clazz) ] "]"
+  { return list; }
+}
+
+public List Elements(String clazz) :
+{
+  ArrayList list = new ArrayList();
+  List rest = null;
+  Object element;
+}
+{
+  element=Value(clazz) [ "," rest=Elements(clazz) ]
+  {
+    list.add(element);
+    if(rest != null)
+      list.addAll(rest);
+    return list;
+  }
+}
+
+public Object Value(String clazz) :
+{ Object o = null; }
+{ 
+( o=JsonString()
+| o=JsonNumber()
+| o=JsonObject(clazz)
+| o=Array(clazz)
+| ( "true" { o = new Boolean(true); } )
+| ( "false" { o = new Boolean(false); } )
+| "null" )
+  { return o; }
+}
+
+public Number JsonNumber() :
+{ 
+  String intpart = "", 
+         fracpart = "", 
+         exppart = "";
+  Number n;
+}
+{
+  intpart=JsonInt() { n = new Integer(intpart); }
+  [ fracpart=JsonFrac() ] { n = new Float(intpart + fracpart); }
+  [ exppart=JsonExp() ] { n = new BigDecimal(intpart + fracpart + exppart); }
+  { return n; }
+}
+
+public String JsonInt() :
+{ 
+  String digits; 
+  boolean negative = false;
+}
+{
+  ["-" { negative = true; } ] digits=Digits()
+  { 
+    if(negative)
+      return "-" + digits; 
+    return digits;
+  }
+}
+
+public String JsonFrac() :
+{ String digits; }
+{
+  "." digits=Digits()
+  { return "." + digits; }
+}
+
+public String JsonExp() :
+{ 
+  Token t; 
+  String digits;
+}
+{
+  t=<E> digits=Digits()
+  { return t.image + digits; }
+}
+
+public String Digits() :
+{ Token t; }
+{
+  t=<DIGITS>
+  { return t.image; }
+}
+
+public String JsonString() :
+{ StringBuffer strbuf = new StringBuffer(); }
+{
+  <QUOTE> [ Chars(strbuf) ] <ENDQUOTE>
+  { return strbuf.toString(); } 
+}
+
+public void Chars(StringBuffer strbuf) :
+{ char c; }
+{ 
+  c=Char() [ Chars(strbuf) ]
+  { strbuf.insert(0, c); }
+}
+
+public char Char() :
+{ Token t; }
+{
+( t=<CHAR>
+| t=<CNTRL_ESC>
+| t=<HEX_ESC> )
+  { 
+    if(t.image.length() < 2)
+      return t.image.charAt(0);
+    if(t.image.length() < 6) {
+      char c = t.image.charAt(1);
+      switch(t.image.charAt(1)) {
+        //control characters
+        case 'b'  : return (char) 8; break;
+        case 'f'  : return (char) 12; break;
+        case 'n'  : return (char) 10; break;
+        case 'r'  : return (char) 13; break;
+        case 't'  : return (char) 9; break;
+        default   : return c;   //characters that represent themselves
+      }
+    }
+    else {      //hex escape code
+      //create an integer from our hex values
+      //and then cast into a char
+      int i = Integer.valueOf(t.image.substring(2,6), 16).intValue();
+      return (char) i;
+    }
+  }
+}

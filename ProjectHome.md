@@ -1,0 +1,1 @@
+This project is a simple grammar for the JSON data interchange format.  It makes creating Java objects simple with an intuitive literal syntax.
